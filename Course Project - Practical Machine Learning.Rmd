@@ -1,0 +1,120 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Sughosh Rao"
+date: "23 March 2016"
+output: html_document
+---
+
+## Introduction
+For this project, we are given data from accelerometers on the belt, forearm, arm, and dumbell of 6 research study participants. Our training data consists of accelerometer data and a label identifying the quality of the activity the participant was doing. Our testing data consists of accelerometer data without the identifying label. Our goal is to predict the labels for the test set observations.
+
+Below is the process followed for estimating out-of-sample errors, building a model and making predictions.
+
+## Getting and Prepping the Data
+Loading the Caret and randomForest package, downloading the training and testing data from the given URL and prepping training data for model selection and prediction.
+```{r}
+library(caret)
+library(randomForest)
+trainUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+ptrain <- read.csv(url(trainUrl), na.strings=c("NA","#DIV/0!",""))
+ptest <- read.csv(url(testUrl), na.strings=c("NA","#DIV/0!",""))
+```
+Setting seed to ensure reproduceability.
+```{r}
+set.seed(10)
+```
+To minimize out-of-sample errors, splitting the traning data into a smaller training set(ptrain1) and a validation set(ptrain2).
+```{r}
+inTrain <- createDataPartition(y=ptrain$classe, p=0.7, list=F)
+ptrain1 <- ptrain[inTrain, ]
+ptrain2 <- ptrain[-inTrain, ]
+```
+Reducing the number of features by removing variables with near zero variance, variables that have a lot of NA values and variables that don't make sense to include for prediction. Performing above cleaning for both training and validation sets.
+```{r}
+# removing variables with nearly zero variance
+nzv <- nearZeroVar(ptrain1)
+ptrain1 <- ptrain1[, -nzv]
+ptrain2 <- ptrain2[, -nzv]
+
+# removing variables that are almost always NA
+mostlyNA <- sapply(ptrain1, function(x) mean(is.na(x))) > 0.95
+ptrain1 <- ptrain1[, mostlyNA==F]
+ptrain2 <- ptrain2[, mostlyNA==F]
+
+# removing variables that don't make intuitive sense for prediction (X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp), which happen to be the first five variables
+ptrain1 <- ptrain1[, -(1:5)]
+ptrain2 <- ptrain2[, -(1:5)]
+```
+
+## Building an appropriate Model
+Starting off with the Random Forest model and checking to see if it has acceptable performance.
+Fitting the model on ptrain1, and using 3-fold cross-validation to select optimal tuning parameters for the model.
+```{r}
+# instruct train to use 3-fold CV to select optimal tuning parameters
+fitControl <- trainControl(method="cv", number=3, verboseIter=F)
+
+# fit model on ptrain1
+fit <- train(classe ~ ., data=ptrain1, method="rf", trControl=fitControl)
+```
+```{r}
+# printing final model to see tuning parameters it chose
+fit$finalModel
+```
+
+## Evaluation the Model
+Using the fitted model to predict the label(“classe”) in ptrain2, and showing the confusion matrix to compare the predicted versus the actual labels
+```{r}
+# use model to predict classe in validation set (ptrain2)
+preds <- predict(fit, newdata=ptrain2)
+
+# show confusion matrix to get estimate of out-of-sample error
+confusionMatrix(ptrain2$classe, preds)
+```
+As seen above, the accuracy 99.8%, thus predicted accuracy for the out-of-sample error is 0.2%.
+This is a great result, so rather than trying additional algorithms, proceeding to use Random Forests to predict on the test set.
+
+## Re-training the Selected Model
+It is important to re-train the model on the full training set (ptrain), rather than using a model trained on a reduced training set (ptrain1), in order to produce the most accurate predictions. SO, repeating everything done above on ptrain and ptest.
+```{r}
+# remove variables with nearly zero variance
+nzv <- nearZeroVar(ptrain)
+ptrain <- ptrain[, -nzv]
+ptest <- ptest[, -nzv]
+
+# remove variables that are almost always NA
+mostlyNA <- sapply(ptrain, function(x) mean(is.na(x))) > 0.95
+ptrain <- ptrain[, mostlyNA==F]
+ptest <- ptest[, mostlyNA==F]
+
+# remove variables that don't make intuitive sense for prediction (X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp), which happen to be the first five variables
+ptrain <- ptrain[, -(1:5)]
+ptest <- ptest[, -(1:5)]
+
+# re-fit model using full training set (ptrain)
+fitControl <- trainControl(method="cv", number=3, verboseIter=F)
+fit <- train(classe ~ ., data=ptrain, method="rf", trControl=fitControl)
+```
+
+## Making Test Set Predictions
+Using the model fit on ptrain to predict the label for the observations in ptest, and write those predictions to individual files.
+```{r}
+# predict on test set
+preds <- predict(fit, newdata=ptest)
+
+# convert predictions to character vector
+preds <- as.character(preds)
+
+# create function to write predictions to files
+pml_write_files <- function(x) {
+    n <- length(x)
+    for(i in 1:n) {
+        filename <- paste0("problem_id_", i, ".txt")
+        write.table(x[i], file=filename, quote=F, row.names=F, col.names=F)
+    }
+}
+
+# create prediction files to submit
+pml_write_files(preds)
+```
